@@ -1,0 +1,9 @@
+{
+  "locationCodes": ["biblioteca_civica_corridoio_principale", "biblioteca_civica_sala_lettura_1"],
+  "parameterTypes": ["2530"],
+  "mongoUri": "mongodb://admin:secretpassword@localhost:27017",
+  "databaseName": "citybit_prod",
+  "outputPath": "./output/export-filtered.csv",
+  "startDate": "2026-06-01T00:00:00.000Z",
+  "endDate": "2026-06-30T23:59:59.999Z"
+}

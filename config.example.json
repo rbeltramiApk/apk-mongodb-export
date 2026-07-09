@@ -1,0 +1,9 @@
+{
+  "locationCodes": ["LOC001", "LOC002", "LOC003"],
+  "parameterTypes": ["temp", "humidity", "pm25"],
+  "mongoUri": "mongodb://localhost:27017",
+  "databaseName": "citybit_prod",
+  "outputPath": "./output/export.csv",
+  "startDate": "2024-01-01T00:00:00.000Z",
+  "endDate": "2024-01-31T23:59:59.999Z"
+}

@@ -141,3 +141,10 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+
+# document specific
+dump_sviluppo/
+dump_prod/
+output/
+.kiro/
