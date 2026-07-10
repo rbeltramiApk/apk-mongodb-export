@@ -2,8 +2,8 @@
   "locationCodes": [
   "comune_di_piacenza"
 ],
-  "parameterTypes": ["47"], 
+  "parameterTypes": ["44", "41", "47", "20", "23"], 
   "mongoUri": "mongodb://admin:secretpassword@localhost:27017",
   "databaseName": "citybit_prod",
-  "outputPath": "./output/comune_di_piacenza_export_pm10.csv"
+  "outputPath": "./output/comune_di_piacenza.csv"
 }

@@ -211,4 +211,111 @@ describe('DataTransformer', () => {
       expect(result).toEqual([]);
     });
   });
+
+  describe('transformToWideRows', () => {
+    it('should place each parameter value in its own column keyed by code', () => {
+      const records: JoinedRecord[] = [
+        {
+          locationCode: 'LOC001',
+          mainType: 'outdoor',
+          tp: 'sensor',
+          measurements: [
+            { k: '44', t: new Date('2024-01-15T10:30:00.000Z'), v: 23.5 },
+            { k: '20', t: new Date('2024-01-15T10:30:00.000Z'), v: 18.2 },
+          ],
+          isFutureMessage: false,
+          isFutureData: false,
+        },
+      ];
+
+      const result = transformer.transformToWideRows(records, ['44', '20']);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({
+        timestamp: '2024-01-15T10:30:00.000Z',
+        '44': '23.5',
+        '20': '18.2',
+      });
+    });
+
+    it('should create one row per timestamp and leave absent parameters empty', () => {
+      const records: JoinedRecord[] = [
+        {
+          locationCode: 'LOC001',
+          mainType: 'outdoor',
+          tp: 'sensor',
+          measurements: [
+            { k: '44', t: new Date('2024-01-15T10:30:00.000Z'), v: 23.5 },
+            // second timestamp only has the '20' parameter
+            { k: '20', t: new Date('2024-01-15T10:31:00.000Z'), v: 18.2 },
+          ],
+          isFutureMessage: false,
+          isFutureData: false,
+        },
+      ];
+
+      const result = transformer.transformToWideRows(records, ['44', '20']);
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({
+        timestamp: '2024-01-15T10:30:00.000Z',
+        '44': '23.5',
+        '20': '',
+      });
+      expect(result[1]).toEqual({
+        timestamp: '2024-01-15T10:31:00.000Z',
+        '44': '',
+        '20': '18.2',
+      });
+    });
+
+    it('should keep rows from different locations separate at the same timestamp', () => {
+      const records: JoinedRecord[] = [
+        {
+          locationCode: 'LOC001',
+          mainType: 'outdoor',
+          tp: 'sensor',
+          measurements: [{ k: '44', t: new Date('2024-01-15T10:30:00.000Z'), v: 10 }],
+          isFutureMessage: false,
+          isFutureData: false,
+        },
+        {
+          locationCode: 'LOC002',
+          mainType: 'outdoor',
+          tp: 'sensor',
+          measurements: [{ k: '44', t: new Date('2024-01-15T10:30:00.000Z'), v: 20 }],
+          isFutureMessage: false,
+          isFutureData: false,
+        },
+      ];
+
+      const result = transformer.transformToWideRows(records, ['44']);
+
+      expect(result).toHaveLength(2);
+      expect(result[0]['44']).toBe('10.0');
+      expect(result[1]['44']).toBe('20.0');
+    });
+
+    it('should represent negative values as empty strings', () => {
+      const records: JoinedRecord[] = [
+        {
+          locationCode: 'LOC001',
+          mainType: 'outdoor',
+          tp: 'sensor',
+          measurements: [{ k: '44', t: new Date('2024-01-15T10:30:00.000Z'), v: -5 }],
+          isFutureMessage: false,
+          isFutureData: false,
+        },
+      ];
+
+      const result = transformer.transformToWideRows(records, ['44']);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]['44']).toBe('');
+    });
+
+    it('should return an empty array for empty input', () => {
+      expect(transformer.transformToWideRows([], ['44'])).toEqual([]);
+    });
+  });
 });

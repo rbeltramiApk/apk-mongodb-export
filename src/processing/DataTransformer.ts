@@ -1,5 +1,5 @@
 import { JoinedRecord } from './types.js';
-import { CSVRow } from '../output/types.js';
+import { CSVRow, WideRow } from '../output/types.js';
 
 /**
  * DataTransformer transforms joined records into CSV row format
@@ -33,6 +33,51 @@ export class DataTransformer {
     }
     
     return csvRows;
+  }
+
+  /**
+   * Pivot joined records into wide-format rows: one row per (locationCode, timestamp),
+   * with one column per requested parameter code.
+   *
+   * Each measurement's value is placed in the column matching its parameter code (`k`).
+   * Parameter codes with no measurement at a given timestamp are left as empty strings.
+   * Values are formatted via formatValue (negative values become empty strings).
+   *
+   * Rows are keyed by location + timestamp so that data from different sensors is never
+   * merged into the same row. Insertion order is preserved.
+   *
+   * @param records - Array of joined records to pivot
+   * @param parameterTypes - Ordered list of parameter codes that become columns
+   * @returns Array of wide-format rows
+   */
+  transformToWideRows(records: JoinedRecord[], parameterTypes: string[]): WideRow[] {
+    const rowMap = new Map<string, WideRow>();
+    const order: string[] = [];
+
+    for (const record of records) {
+      for (const measurement of record.measurements) {
+        const timestamp = this.formatTimestamp(measurement.t);
+        // Composite key keeps different sensors separate even at identical timestamps.
+        const key = `${record.locationCode}\u0000${timestamp}`;
+
+        let row = rowMap.get(key);
+        if (!row) {
+          row = { timestamp };
+          for (const parameterType of parameterTypes) {
+            row[parameterType] = '';
+          }
+          rowMap.set(key, row);
+          order.push(key);
+        }
+
+        // Only populate columns for requested parameter types.
+        if (parameterTypes.includes(measurement.k)) {
+          row[measurement.k] = this.formatValue(measurement.v);
+        }
+      }
+    }
+
+    return order.map((key) => rowMap.get(key)!);
   }
 
   /**

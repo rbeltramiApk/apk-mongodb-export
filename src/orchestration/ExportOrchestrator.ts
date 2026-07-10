@@ -4,8 +4,10 @@ import { DataJoiner } from '../processing/DataJoiner.js';
 import { DataFilter } from '../processing/DataFilter.js';
 import { DataTransformer } from '../processing/DataTransformer.js';
 import { CSVWriter } from '../output/CSVWriter.js';
+import { resolveParameterColumns } from '../config/parameters.js';
 import type { UserConfig } from '../config/types.js';
 import type { ExportResult } from './types.js';
+import type { CSVColumn } from '../output/types.js';
 
 /**
  * ExportOrchestrator coordinates the entire export process
@@ -31,6 +33,19 @@ export class ExportOrchestrator {
     private readonly writer: CSVWriter,
     private readonly logger: Logger
   ) {}
+
+  /**
+   * Resolve the ordered CSV columns for the export: a 'timestamp' column followed by
+   * one column per requested parameter type, titled with its human-readable name.
+   * Fails fast (throws) if any parameter code has no matching key in parameters.ts.
+   */
+  private buildColumns(config: UserConfig): CSVColumn[] {
+    const parameterColumns = resolveParameterColumns(config.parameterTypes);
+    return [
+      { id: 'timestamp', title: 'timestamp' },
+      ...parameterColumns.map((column) => ({ id: column.code, title: column.name })),
+    ];
+  }
 
   /**
    * Execute the complete export pipeline
@@ -67,6 +82,12 @@ export class ExportOrchestrator {
         locationCodesCount: config.locationCodes.length,
         parameterTypesCount: config.parameterTypes.length
       }, 'Processing configuration');
+
+      // Resolve and validate CSV columns up-front (fails fast on unknown parameter codes)
+      const columns = this.buildColumns(config);
+      this.logger.info({
+        columns: columns.map((column) => column.title)
+      }, 'Resolved CSV columns');
 
       // Stage 1: Connect to MongoDB
       this.logger.info('Connecting to MongoDB');
@@ -134,28 +155,28 @@ export class ExportOrchestrator {
         warnings.push(message);
       }
 
-      // Stage 7: Transform to CSV rows
-      this.logger.info('Transforming data to CSV format');
-      const csvRows = this.transformer.transformToCSVRows(filteredRecords);
-      this.logger.info({ rowCount: csvRows.length }, 'Transformed to CSV rows');
+      // Stage 7: Pivot to wide-format rows (one column per parameter type)
+      this.logger.info('Transforming data to wide CSV rows');
+      const wideRows = this.transformer.transformToWideRows(filteredRecords, config.parameterTypes);
+      this.logger.info({ rowCount: wideRows.length }, 'Transformed to wide CSV rows');
 
-      // Stage 8: Write CSV file
+      // Stage 8: Write single CSV file with dynamic columns
       this.logger.info('Writing CSV file');
-      await this.writer.write(csvRows, {
+      await this.writer.write(wideRows, columns, {
         outputPath: config.outputPath,
         createDirectory: true
       });
       
       // Log completion (Requirements 12.4, 12.5)
       this.logger.info({
-        rowsExported: csvRows.length,
+        rowsExported: wideRows.length,
         outputPath: config.outputPath
       }, 'Export completed successfully');
 
       // Return success result
       return {
         success: true,
-        rowsExported: csvRows.length,
+        rowsExported: wideRows.length,
         outputPath: config.outputPath,
         warnings
       };
@@ -194,7 +215,7 @@ export class ExportOrchestrator {
    */
   async executeStreaming(config: UserConfig, batchSize: number = 1000): Promise<ExportResult> {
     const warnings: string[] = [];
-    let totalRowsExported = 0;
+    let totalRowsWritten = 0;
 
     try {
       this.logger.info('Starting streaming export operation');
@@ -204,6 +225,12 @@ export class ExportOrchestrator {
         parameterTypesCount: config.parameterTypes.length,
         batchSize
       }, 'Processing configuration (streaming mode)');
+
+      // Resolve and validate CSV columns up-front (fails fast on unknown parameter codes)
+      const columns = this.buildColumns(config);
+      this.logger.info({
+        columns: columns.map((column) => column.title)
+      }, 'Resolved CSV columns');
 
       // Stage 1: Connect to MongoDB
       this.logger.info('Connecting to MongoDB');
@@ -215,9 +242,9 @@ export class ExportOrchestrator {
       const deviceData = await this.dbClient.queryDevices(config.locationCodes);
       this.logger.info({ count: deviceData.length }, 'Retrieved device documents');
 
-      // Initialize CSV file with headers
-      this.logger.info('Initializing CSV file');
-      await this.writer.initializeFile({
+      // Initialize the single output CSV file with headers (timestamp + parameter columns)
+      this.logger.info('Initializing output CSV file');
+      await this.writer.initializeFile(columns, {
         outputPath: config.outputPath,
         createDirectory: true
       });
@@ -249,7 +276,7 @@ export class ExportOrchestrator {
             }
           }
           
-          // Filter and transform
+          // Filter and transform to get the joined records (for Excel export)
           const validRecords = this.filter.filterInvalidRecords(joinResult.joined);
           const filterCriteria = {
             parameterTypes: config.parameterTypes,
@@ -260,20 +287,22 @@ export class ExportOrchestrator {
             validRecords,
             filterCriteria
           );
-          const csvRows = this.transformer.transformToCSVRows(filteredRecords);
           
-          // Append rows to CSV file
-          if (csvRows.length > 0) {
-            await this.writer.appendRows(csvRows, config.outputPath);
-            totalRowsExported += csvRows.length;
+          // Pivot to wide rows and append to the single CSV file
+          if (filteredRecords.length > 0) {
+            const wideRows = this.transformer.transformToWideRows(
+              filteredRecords,
+              config.parameterTypes
+            );
+            await this.writer.appendRows(wideRows, columns, config.outputPath);
+            totalRowsWritten += wideRows.length;
           }
           
           // Log progress
           this.logger.info({
             batchDocuments: timeSeriesBatch.length,
-            batchRows: csvRows.length,
-            totalDocuments: documentsProcessed,
-            totalRows: totalRowsExported
+            rowsWritten: totalRowsWritten,
+            totalDocuments: documentsProcessed
           }, 'Processed batch');
         }
       );
@@ -285,7 +314,7 @@ export class ExportOrchestrator {
         warnings.push(message);
       }
 
-      if (totalRowsExported === 0 && hasData) {
+      if (totalRowsWritten === 0 && hasData) {
         const message = 'No measurements match the provided parameter types after filtering';
         this.logger.warn(message);
         warnings.push(message);
@@ -293,13 +322,13 @@ export class ExportOrchestrator {
 
       this.logger.info({
         totalDocuments,
-        rowsExported: totalRowsExported,
+        rowsWritten: totalRowsWritten,
         outputPath: config.outputPath
       }, 'Streaming export completed successfully');
 
       return {
         success: true,
-        rowsExported: totalRowsExported,
+        rowsExported: totalRowsWritten,
         outputPath: config.outputPath,
         warnings
       };
@@ -307,10 +336,10 @@ export class ExportOrchestrator {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       this.logger.error({ error: errorMessage }, 'Streaming export failed');
-
+      
       return {
         success: false,
-        rowsExported: totalRowsExported,
+        rowsExported: totalRowsWritten,
         outputPath: config.outputPath,
         warnings,
         error: errorMessage

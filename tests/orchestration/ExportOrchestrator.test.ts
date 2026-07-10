@@ -102,7 +102,8 @@ describe('ExportOrchestrator', () => {
 
   const createMockConfig = (): UserConfig => ({
     locationCodes: ['LOC001', 'LOC002'],
-    parameterTypes: ['temp', 'humidity'],
+    // Valid parameter codes from parameters.ts: '20' -> temp, '23' -> humidity
+    parameterTypes: ['20', '23'],
     mongoUri: 'mongodb://localhost:27017',
     databaseName: 'test_db',
     outputPath: './tests/output/test.csv'
@@ -168,6 +169,28 @@ describe('ExportOrchestrator', () => {
   });
 
   describe('execute - error handling', () => {
+    it('should fail fast with an explanation when a parameter type has no key in parameters.ts', async () => {
+      // Arrange - '999' is not defined in parameters.ts
+      const config = createMockConfig();
+      config.parameterTypes = ['20', '999'];
+
+      // Act
+      const result = await orchestrator.execute(config);
+
+      // Assert
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Unknown parameter type');
+      expect(result.error).toContain('"999"');
+
+      // Validation must happen before connecting to MongoDB (fail fast)
+      expect(mockDbClient.connectCalls).toBe(0);
+
+      const hasErrorLog = mockLogger.errorCalls.some((call: any[]) =>
+        typeof call[0] === 'object' && 'error' in call[0]
+      );
+      expect(hasErrorLog).toBe(true);
+    });
+
     it('should handle connection failure and cleanup (Requirements 13.1, 13.4)', async () => {
       // Arrange
       const config = createMockConfig();
